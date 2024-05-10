@@ -3,8 +3,7 @@
 from typing import Tuple, Dict, List
 from collections import Counter
 from dataclasses import dataclass
-from user_input.metrics import Metric
-from functools import lru_cache
+from metrics import Metric
 
 import pandas as pd
 
