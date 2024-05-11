@@ -1,11 +1,11 @@
 """DQ Report."""
 
-from typing import Tuple, Dict, List
-from collections import Counter
+from typing import Tuple, Dict, List, Union
 from dataclasses import dataclass
-from metrics import Metric
+from data_quality.metrics import Metric
 
 import pandas as pd
+import pyspark.sql as ps
 
 LimitType = Dict[str, Tuple[float, float]]
 CheckType = Tuple[str, Metric, LimitType]
@@ -18,68 +18,130 @@ class Report:
     checklist: List[CheckType]
     engine: str = "pandas"
 
-    def fit(self, tables: Dict[str, pd.DataFrame]) -> Dict:
+    def fit(self, tables: Dict[str, Union[pd.DataFrame, ps.DataFrame]], check: List[CheckType]) -> Dict:
         """Calculate DQ metrics and build report."""
+
+        if self.engine == "pandas":
+            return self._fit_pandas(tables, check)
+
+        if self.engine == "pyspark":
+            return self._fit_pyspark(tables, check)
+
+        raise NotImplementedError("Only pandas and pyspark APIs currently supported!")
+
+    def _fit_pandas(self, tables: Dict[str, pd.DataFrame], check: List[CheckType]) -> Dict:
+        """Calculate DQ metrics and build report."""
+        self.checklist = check
+
+        if not hasattr(self, "_reports"):
+            self._reports = {}
+        hash_key = hash(str(tables))
+        if hash_key in self._reports:
+            return self._reports[hash_key]
+
         self.report_ = {}
         report = self.report_
 
-        # Check if engine supported
-        if self.engine != "pandas":
-            raise NotImplementedError("Only pandas API currently supported!")
-        report["title"] = f"DQ Report for tables {sorted(list(tables.keys()))}"
+        result = []
+        for table, metric, limits in self.checklist:
+            row = {"table_name": table, "metric": repr(metric), "limits": str(limits)}
+            try:
+                df = tables[table]
+                values = metric(df)
+                row["values"] = values
+                row["status"] = "."
+                row["error"] = ""
+                for key, (a, b) in limits.items():
+                    value = values[key]
+                    if not (a <= value <= b):
+                        row["status"] = "F"
 
-        result = {"table_name": [],
-                  "metric": [],
-                  "limits": [],
-                  "values": [],
-                  "status": [],
-                  "error": []}
+            except Exception as e:
+                row["status"] = "E"
+                row["values"] = {}
+                row["error"] = type(e).__name__
 
-        for name, table in tables.items():
-            for table_name, metric, limits in self.checklist:
-                if name == table_name:
-                    result["table_name"].append(name)
-                    try:
-                        res = metric(table)
-                        result["metric"].append(str(metric))
-                        result["limits"].append(str(limits))
-                        result["values"].append(res)
+            result.append(row)
 
-                        status = "."
-                        for param, values in limits.items():
-                            if not (values[0] <= res.get(param) <= values[1]):
-                                status = "F"
-                                break
+        tables = sorted(list(set(tables.keys())))
+        result = pd.DataFrame(result)
 
-                        result["status"].append(status)
-                        result["error"].append("")
+        report["title"] = f"DQ Report for tables {tables}"
+        report["result"] = result
 
-                    except Exception as e:
-                        result["metric"].append(metric)
-                        result["limits"].append(limits)
-                        result["values"].append({})
-                        result["status"].append("E")
-                        result["error"].append(type(e).__name__)
-                else:
-                    continue
+        total = len(result)
+        passed = sum(result["status"] == ".")
+        failed = sum(result["status"] == "F")
+        errors = sum(result["status"] == "E")
 
-        rep = pd.DataFrame(result)
-        stats = Counter(result["status"])
-        passed = stats.get(".") if stats.get(".") is not None else 0
-        passed_percent = round(100.0 * passed / len(rep), 2)
-        failed = stats.get("F") if stats.get("F") is not None else 0
-        failed_percent = round(100.0 * failed / len(rep), 2)
-        errors = stats.get("E") if stats.get("E") is not None else 0
-        errors_percent = round(100.0 * errors / len(rep), 2)
-
-        report["result"] = rep
         report["passed"] = passed
-        report["passed_pct"] = passed_percent
+        report["passed_pct"] = round(100 * passed / total, 2)
         report["failed"] = failed
-        report["failed_pct"] = failed_percent
+        report["failed_pct"] = round(100 * failed / total, 2)
         report["errors"] = errors
-        report["errors_pct"] = errors_percent
-        report["total"] = len(rep)
+        report["errors_pct"] = round(100 * errors / total, 2)
+        report["total"] = total
+
+        self._reports[hash_key] = report
+
+        return report
+
+    def _fit_pyspark(self, tables: Dict[str, ps.DataFrame], check: List[CheckType]) -> Dict:
+        """Calculate DQ metrics and build report.  Engine: PySpark"""
+        self.checklist = check
+
+        if not hasattr(self, "_reports"):
+            self._reports = {}
+        hash_key = hash(str(tables))
+        if hash_key in self._reports:
+            return self._reports[hash_key]
+
+        self.report_ = {}
+        report = self.report_
+
+        result = []
+        for table, metric, limits in self.checklist:
+            row = {"table_name": table, "metric": repr(metric), "limits": str(limits)}
+
+            try:
+                df = tables[table]
+                values = metric(df)
+                row["values"] = values
+                row["status"] = "."
+                row["error"] = ""
+
+                for key, (a, b) in limits.items():
+                    value = values[key]
+                    if not (a <= value <= b):
+                        row["status"] = "F"
+
+            except Exception as e:
+                row["status"] = "E"
+                row["values"] = {}
+                row["error"] = type(e).__name__
+
+            result.append(row)
+
+        tables = sorted(list(set(tables.keys())))
+        result = pd.DataFrame(result)
+
+        report["title"] = f"DQ Report for tables {tables}"
+        report["result"] = result
+
+        total = len(result)
+        passed = sum(result["status"] == ".")
+        failed = sum(result["status"] == "F")
+        errors = sum(result["status"] == "E")
+
+        report["passed"] = passed
+        report["passed_pct"] = round(100 * passed / total, 2)
+        report["failed"] = failed
+        report["failed_pct"] = round(100 * failed / total, 2)
+        report["errors"] = errors
+        report["errors_pct"] = round(100 * errors / total, 2)
+        report["total"] = total
+
+        self._reports[hash_key] = report
 
         return report
 

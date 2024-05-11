@@ -6,7 +6,7 @@ import datetime
 
 import pandas as pd
 import pyspark.sql as ps
-from pyspark.sql.functions import col, count
+from pyspark.sql.functions import col, isnull, isnan
 
 
 @dataclass
@@ -81,17 +81,20 @@ class CountNull(Metric):
         return {"total": n, "count": k, "delta": k / n}
 
     def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
-        df_for_check = df.select(self.columns)
+        list_missed = [isnan(col(c)) | isnull(col(c)) for c in self.columns]
         n = df.count()
         k = None
         if self.aggregation == "any":
-            k = df_for_check.selectExpr(
-                "sum(case when {0} is null then 1 else 0 end)".format(" || ".join(self.columns))).first()[
-                0]
+            any_miss = list_missed[0]
+            for ans in list_missed[1:]:
+                any_miss = any_miss | ans
+            k = df.where(any_miss).count()
+
         elif self.aggregation == "all":
-            k = df_for_check.selectExpr(
-                "sum(case when {0} is null then 1 else 0 end)".format(" && ".join(self.columns))).first()[
-                0]
+            any_miss = list_missed[0]
+            for ans in list_missed[1:]:
+                any_miss = any_miss & ans
+            k = df.where(any_miss).count()
 
         return {"total": n, "count": k, "delta": k / n}
 
@@ -184,9 +187,13 @@ class CountBelowColumn(Metric):
     def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
         n = df.count()
         if not self.strict:
-            k = df.where(col(self.column_x) <= col(self.column_y)).count()
+            k = df.where((col(self.column_x) <= col(self.column_y)) & \
+                         ~isnan(col(self.column_x)) & ~isnan(col(self.column_y)) & \
+                         ~isnull(col(self.column_x)) & ~isnull(col(self.column_y))).count()
         else:
-            k = df.where(col(self.column_x) <= col(self.column_y)).count()
+            k = df.where((col(self.column_x) < col(self.column_y)) & \
+                         ~isnan(col(self.column_x)) & ~isnan(col(self.column_y)) & \
+                         ~isnull(col(self.column_x)) & ~isnull(col(self.column_y))).count()
         return {"total": n, "count": k, "delta": k / n}
 
 
@@ -213,9 +220,15 @@ class CountRatioBelow(Metric):
     def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
         n = df.count()
         if not self.strict:
-            k = df.where(col(self.column_x) / col(self.column_y) <= col(self.column_z)).count()
+            k = df.where(((col(self.column_x) / col(self.column_y)) <= col(self.column_z)) & \
+                         ~isnan(col(self.column_x)) & ~isnan(col(self.column_y)) & ~isnan(col(self.column_z)) & \
+                         ~isnull(col(self.column_x)) & ~isnull(col(self.column_y)) & ~isnull(
+                col(self.column_z))).count()
         else:
-            k = df.where(col(self.column_x) / col(self.column_y) <= col(self.column_z)).count()
+            k = df.where(((col(self.column_x) / col(self.column_y)) < col(self.column_z)) & \
+                         ~isnan(col(self.column_x)) & ~isnan(col(self.column_y)) & ~isnan(col(self.column_z)) & \
+                         ~isnull(col(self.column_x)) & ~isnull(col(self.column_y)) & ~isnull(
+                col(self.column_z))).count()
         return {"total": n, "count": k, "delta": k / n}
 
 
@@ -234,8 +247,8 @@ class CountCB(Metric):
 
     def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
         alpha = (1 - self.conf) / 2
-        ucb = df.approxQuantile(col(self.column), [1 - alpha], 0)[0]
-        lcb = df.approxQuantile(col(self.column), [alpha], 0)[0]
+        ucb = df.approxQuantile(self.column, [1 - alpha], 0)[0]
+        lcb = df.approxQuantile(self.column, [alpha], 0)[0]
         return {"lcb": lcb, "ucb": ucb}
 
 
@@ -256,7 +269,9 @@ class CountLag(Metric):
 
     def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
         a = datetime.datetime.now()
-        b = df.agg({self.column: "max"}).collect()[0][f"max({self.column})"]
+        s = self.column
+        b = df.agg({self.column: "max"}).collect()[0][f"max({s})"]
+        b = datetime.datetime.strptime(b, '%Y-%m-%d')
         lag = (a - b).days
         a = a.strftime(self.fmt)
         b = b.strftime(self.fmt)
