@@ -46,11 +46,11 @@ def main():
     d = {"sales": daily_sales, "relevance": visits}
     d_spark = {"sales": daily_sales_spark, "relevance": visits_spark}
     rep = Report(CHECKLIST)
-    rep.fit(d, CHECKLIST)
+    rep.fit(d)
     print(rep.to_str())
 
     rep_spark = Report(CHECKLIST)
-    rep_spark.fit(d_spark, CHECKLIST)
+    rep_spark.fit(d_spark)
     print(rep_spark.to_str())
 
 
