@@ -1,94 +1,199 @@
-# Качество данных и Spark.
+# Data Quality Pipeline
 
-В данном проекте был реализован пакет *data_quality* для оценки и формирования сводного отчета по данным в разных
-форматах. По этим отчетам можно судить о качестве данных.
+[![CI](https://github.com/Lebedinskiy1377/data_quality_pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Lebedinskiy1377/data_quality_pipeline/actions/workflows/ci.yml)
 
-**metric.py** - модуль, содержащий метрики, которые считаются по переданным данным.
-Все они обернуты в датаклассы, поддерживается работа с датафреймами pandas и pyspark.
+`data_quality` is a small Python package that measures data quality and builds a summary report.
+The same metrics and checklists work on **pandas** and **PySpark** DataFrames and give the same
+results (up to floating-point rounding), so you can debug checks locally on a sample and run them
+on a Spark cluster in production.
 
-**report.py** - модуль, содержащий класс Report, который отвечает за формирование отчета**
+## Why data quality
 
-**checklist.py** - модуль приводит пример чек-листа, который будет применяться к данным.
+![Garbage in, garbage out](docs/images/garbage_in_garbage_out.png)
 
-**Data quality (Качество данных)** это практика измерения состояния данных.
+If an analytical report is built on wrong data, its conclusions are wrong. If an ML model is
+trained on wrong data, it makes large errors. Data quality (DQ) checks measure the state of the
+data and should be built into every data pipeline.
 
-Для использования следует выполнить команду:
+The main properties of data to check:
+
+- **Completeness**: required fields are present, there are no gaps.
+- **Consistency**: there are no contradictions in the data, relations between fields and tables hold.
+- **Availability**: the data can be read when it is needed.
+- **Validity**: values are unambiguous and within the allowed range.
+
+## DQ in a pipeline
+
+![DQ pipeline](docs/images/dq_pipeline.png)
+
+A DQ module runs a checklist against the input data before a transformation (pre-validation) and
+against its output after it (post-validation). Every run produces a DQ report.
+
+Production tables are often too large for a single machine and are processed with Spark. Every
+metric is computed with Spark aggregations, so the data is never collected to the driver.
+
+## Installation
+
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/Lebedinskiy1377/data_quality_pipeline.git
+cd data_quality_pipeline
+pip install -e .            # pandas only
+pip install -e ".[spark]"   # with PySpark, needs Java 17+
 ```
 
-![img.png](pictures/img.png)
+Python 3.10+ is required.
 
-+ Если на вход аналитического отчета подаются ошибочные, некорректные данные, то и отчет будет ошибочным и иметь ложные выводы.
-+ Аналогично с ML моделями - некачественные данные на входе влекут модель которая работает с большими ошибками.
+## Quick start
 
-**Data Quality (DQ)**  должен быть встроен в любой пайплайн обработки данных.
+```python
+import pandas as pd
 
-# Важные свойства данных
+from data_quality import CountDuplicates, CountNull, CountTotal, Report
 
-+ **Полнота** - наличие обязательных / необязательных полей, пропуски
-+ **Согласованность** - отсутствие в данных расхождений, корректность связей
-+ **Доступность** - данные доступны для чтения
-+ **Достоверность** - значения однозначны и допустимы
+checklist = [
+    ("sales", CountTotal(), {"total": (1, 1e6)}),
+    ("sales", CountNull(["qty"]), {"count": (0, 0)}),
+    ("sales", CountDuplicates(["day", "item_id"]), {"count": (0, 0)}),
+]
 
-## **Data Quality pipeline**
+sales = pd.read_csv("examples/data/ke_daily_sales.csv")
 
-![img.png](pictures/img1.png)
-
-# **Инструменты для параллельной обработки данных на распределенных системах**
-
-**Hadoop** — это программная платформа с открытым исходным кодом для хранения и обработки больших объемов данных. Она предназначена для параллельной обработки данных распределенных по множеству компьютеров в кластере. Hadoop используется для хранения и обработки больших объемов данных.
-
-**Apache Spark** — это платформа распределенных вычислений с открытым исходным кодом, предназначенная для быстрой и параллельной обработки данных. Платформа построена на основе экосистемы Hadoop и может использоваться для обработки данных, хранящихся в распределенной файловой системе Hadoop (HDFS) или других системах хранения данных.
-
-Spark можно использовать для широкого спектра задач, таких как очистка данных, машинное обучение и обработка данных в реальном времени. Spark известен своей высокой скоростью обработки и простотой использования и стал популярным выбором для многих компаний, работающих с BigData.
-
-**PySpark** — это API Python для Apache Spark. Он позволяет писать скрипты для обработки данных в кластере Spark на языке Python. PySpark часто применяется Data Science командами, поскольку представляет простой и гибкий способ написания пайплайнов обработки данных, как для анализа, так и для обучения моделей.
-
-Сами данные могут могут быть огромного размера и храниться в распределенной файловой системе Hadoop (HDFS) на множестве компьютеров. Обработка данных будет выполняться Spark-кластером. А пайплайны для обработки данных могут быть написаны, например, на языке Python с помощью библиотеки PySpark.
-
-## **Зачем нужен Spark, если есть СУБД?**
-
----
-
-Зачем нужен Spark, если есть SQL-СУБД (Postgres, ClickHouse и др.)
-
-**Spark** — это распределенная вычислительная платформа, предназначенная для быстрой параллельной обработки данных, в то время как традиционные СУБД (системы управления базами данных) предназначены для хранения и управления данными в структурированном формате. Хотя СУБД можно использовать для некоторых обработки больших данных, но они не всегда хорошо подходят для работы с очень большими объемами или для распределенной обработки данных в режиме реального времени.
-
-**Spark**, с другой стороны, разработан специально для задач распределенной обработки больших массивов данных. Он часто используется в сочетании с традиционными СУБД, что позволяет получить комплексное решение и извлечь плюсы каждого подхода.
-
-Подобный фреймворк нужен чтобы строить определенный data-driven продукт, где ETL-процесс достаточно сложный. Например, он может включать обучение модели, обработку данных перед обучением / перед записью / перед отправкой. И весь процесс необходим выполнять по запросу или по расписанию.
-
-Код на **PySpark** намного более читабелен при росте сложности запроса или алгоритма обработки данных. Благодаря **Spark** добавляются абстракции, которые делают процесс разработки поддержания, корректировки бизнес-логики и взаимодействия с таблицами сильно проще.
-
-# Пример использования PySpark
-
-Приведем простой пример использования **PySpark**. Откроем файл csv, подсчитаем количество строк и выведем топ-10 строк.  PySpark умеет не только подключаться к кластеру Spark и обрабатывать данные там, но и работает с множеством популярных форматов. Что очень удобно для целей отладки скриптов локально, а также для изучения **API PySpark**.
-
-```Python
-# Import the PySpark libraries
-from pyspark import SparkContext, SparkConf
-from pyspark.sql import SparkSession, SQLContext
-
-# Create a SparkSession
-spark = SparkSession.builder.appName("MyApp").getOrCreate()
-
-# Create a SQLContext
-sqlContext = SQLContext(spark)
-
-# Load a CSV file
-df = sqlContext.read.csv("file:///path/to/file.csv", header=True)
-
-# Count the number of rows in the DataFrame
-rowCount = df.count()
-
-# Print the row count
-print("Number of rows:", rowCount)
-
-# Print the schema of the DataFrame
-df.printSchema()
-
-# Show the first 10 rows of the DataFrame
-df.show(10)
+report = Report(checklist)
+result = report.fit({"sales": sales})
+print(report.to_str())
 ```
 
+```text
+DQ Report for tables ['sales']
+
+   table_name  metric                                         limits                     values                                     status  error
+0  sales       CountTotal()                                   {'total': (1, 1000000.0)}  {'total': 7}                               .
+1  sales       CountNull(columns=['qty'], aggregation='any')  {'count': (0, 0)}          {'total': 7, 'count': 0, 'delta': 0.0}     .
+2  sales       CountDuplicates(columns=['day', 'item_id'])    {'count': (0, 0)}          {'total': 7, 'count': 1, 'delta': 0.1429}  F
+
+Passed: 2 (66.67%)
+Failed: 1 (33.33%)
+Errors: 0 (0.0%)
+
+Total: 3
+```
+
+The sample data has a duplicated `(day, item_id)` pair, so the last check fails. In a pipeline,
+stop when a check fails or cannot be computed:
+
+```python
+if result["failed"] or result["errors"]:
+    raise RuntimeError("Data quality checks failed")
+```
+
+With PySpark only the tables change:
+
+```python
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.getOrCreate()
+sales = spark.read.csv("examples/data/ke_daily_sales.csv", header=True, inferSchema=True)
+
+result = Report(checklist).fit({"sales": sales})
+```
+
+## Checklists and reports
+
+A checklist is a list of `(table_name, metric, limits)` checks:
+
+- `table_name` is a key of the dict of tables passed to `Report.fit()`;
+- `metric` is one of the [metrics](#metrics);
+- `limits` maps keys of the metric result to inclusive `(low, high)` ranges, for example
+  `{"delta": (0, 0.05)}`. Use `{}` to only record the values.
+
+`Report.fit()` runs every check and returns the report, a dict with:
+
+- `title`;
+- `result`: a pandas DataFrame with a row per check and the columns `table_name`, `metric`,
+  `limits`, `values`, `status` and `error`;
+- `passed`, `failed`, `errors`, `total`: the number of checks, and `passed_pct`, `failed_pct`,
+  `errors_pct`: the same as percentages.
+
+The status of a check is one of:
+
+| Status | Meaning |
+|--------|---------|
+| `.`    | Passed: every value is within its limits. |
+| `F`    | Failed: a value is outside its limits or missing. |
+| `E`    | Error: the check could not be run, e.g. because of an unknown table, column or limit key. The `error` column says why. An error does not stop the other checks. |
+
+`Report.to_str()` formats the report as text.
+
+## Metrics
+
+| Metric | Result | Description |
+|--------|--------|-------------|
+| `CountTotal()` | `total` | Number of rows. |
+| `CountZeros(column)` | `total`, `count`, `delta` | Rows where `column` is 0. |
+| `CountNull(columns, aggregation="any")` | `total`, `count`, `delta` | Rows with a missing value (null, NaN) in any (`"any"`) or all (`"all"`) of `columns`. |
+| `CountDuplicates(columns)` | `total`, `count`, `delta` | Rows that repeat an earlier row in `columns`. |
+| `CountValue(column, value)` | `total`, `count`, `delta` | Rows where `column == value`. |
+| `CountBelowValue(column, value, strict=False)` | `total`, `count`, `delta` | Rows where `column <= value` (`<` if `strict`). |
+| `CountBelowColumn(column_x, column_y, strict=False)` | `total`, `count`, `delta` | Rows where `column_x <= column_y` (`<` if `strict`). |
+| `CountRatioBelow(column_x, column_y, column_z, strict=False)` | `total`, `count`, `delta` | Rows where `column_x / column_y <= column_z` (`<` if `strict`). Rows where `column_y` is 0 are skipped. |
+| `CountCB(column, conf=0.95)` | `lcb`, `ucb` | Bounds of the central `conf` share of values: the `(1 - conf) / 2` and `(1 + conf) / 2` quantiles. |
+| `CountLag(column, fmt="%Y-%m-%d")` | `today`, `last_day`, `lag` | Days between today and the latest date in `column`: dates, timestamps or ISO 8601 strings like `2022-10-24`. `fmt` formats `today` and `last_day`. |
+
+`count` is the number of matching rows, `total` is the number of rows in the table and
+`delta = count / total`. For an empty table `delta` is 0, so use `CountTotal` to catch empty
+tables. Rows with missing values never match a comparison. Compare a column with a value of the
+same type: pandas and Spark convert mismatched types differently.
+
+Column names are used literally: in Spark, `a.b` is a column named `a.b`, not the field `b` of a
+struct column `a`. `CountLag` converts timestamps to dates in the column's time zone in pandas and
+in the session time zone (`spark.sql.session.timeZone`) in Spark.
+
+To add a metric, subclass `Metric` as a dataclass and implement `_call_pandas()` and
+`_call_pyspark()`.
+
+## Demo
+
+[`examples/demo.py`](examples/demo.py) runs an example checklist against two sample tables:
+daily sales and clickstream.
+
+```bash
+python examples/demo.py                   # pandas
+python examples/demo.py --engine spark    # PySpark
+python examples/demo.py --engine both
+```
+
+The sample data contains planted problems, and the report catches them:
+
+| Table | Check | Problem |
+|-------|-------|---------|
+| sales | `CountLag("day")` | The data is from October 2022. |
+| sales | `CountDuplicates(["day", "item_id"])` | Item 100 appears twice on 2022-10-24. |
+| sales | `CountRatioBelow("revenue", "price", "qty", strict=True)` | Revenue 500 is less than price × qty = 120 × 5. |
+| relevance | `CountLag("day")` | The data is from September 2022. |
+| relevance | `CountBelowColumn("clicks", "payments", strict=True)` | Item 300 has 2 payments and 0 clicks on 2022-09-23. |
+
+## Development
+
+```bash
+pip install -e ".[spark,dev]"
+pytest              # Spark tests are skipped if PySpark or Java is not available
+ruff check .
+ruff format .
+```
+
+Every metric is tested on both pandas and PySpark. CI runs the linters and the tests on
+Python 3.10 with the oldest supported pandas and PySpark, on Python 3.13 with the latest
+releases, and without PySpark.
+
+## Project structure
+
+```text
+├── src/data_quality/
+│   ├── metrics.py     # metrics
+│   └── report.py      # Report: runs a checklist and formats the results
+├── examples/
+│   ├── demo.py        # example checklist
+│   └── data/          # sample tables
+├── tests/
+└── docs/images/
+```
