@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "data-quality-pipeline"
+dynamic = ["version"]
+description = "Data quality metrics and reports for pandas and PySpark DataFrames"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Dmitriy Lebedinskiy" }]
+dependencies = ["pandas>=2.0"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+spark = ["pyspark>=3.5"]
+dev = ["pytest>=7.0", "ruff~=0.16.0"]
+
+[project.urls]
+Repository = "https://github.com/Lebedinskiy1377/data_quality_pipeline"
+
+[tool.hatch.version]
+path = "src/data_quality/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/data_quality"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific rules
+]
